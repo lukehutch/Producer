@@ -2,6 +2,8 @@
 
 A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support for the `yield` / generator pattern. Provides a bounded queue between the producer and consumer, which allows for buffering and flow control, and allowing for parallel pipelining between producer and consumer (so that the consumer can be working on consuming the previous item while the producer is working on producing the next item).
 
+**See also: [`PipelinedOutputStream`](https://github.com/lukehutch/PipelinedOutputStream)**
+
 ## Caveats
 
 * `Yielder<T>` implements `Iterable<T>`, but note both its `hasNext()` and `next()` methods are blocking calls.
