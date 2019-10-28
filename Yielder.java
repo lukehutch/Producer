@@ -59,39 +59,29 @@ public class Yielder<T> implements AutoCloseable {
     /** True when {@link close()} has been called. */
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    /**
-     * Receives objects from a {@link Producer} and places them in the bounded FIFO queue to send them to the
-     * {@link Consumer}.
-     */
-    public static final class Receiver<T> {
+    /** Producer. */
+    public static abstract class Producer<T> {
         private ArrayBlockingQueue<Optional<T>> queue;
 
-        private Receiver(ArrayBlockingQueue<Optional<T>> boundedQueue) {
+        private void setQueue(ArrayBlockingQueue<Optional<T>> boundedQueue) {
             this.queue = boundedQueue;
         }
 
-        /**
-         * Call from the {@link Producer} to yield an item to the {@link Consumer}. Will block if the queue is full.
-         */
-        public void yield(T item) {
+        public final void yield(T item) {
             try {
-                queue.put(Optional.of(item));
+                this.queue.put(Optional.of(item));
             } catch (InterruptedException e) {
-                // Re-throw as a RuntimeException so that caller doesn't have to put try-catch around yield() calls.
                 throw new RuntimeException(e);
             }
         }
+
+        /** Producer method. Call {@link #yield(Object)} to send a produced item to the {@link Consumer}. */
+        public abstract void produce();
     }
 
-    /** Producer. */
-    public interface Producer<T> {
-        /** Producer method. Call {@link Receiver#yield(Object)} to send a produced item to the {@link Consumer}. */
-        public void produce(Receiver<T> receiver);
-    }
-
-    /** Producer. */
+    /** Consumer. */
     public interface Consumer<T> {
-        /** Consumer method. */
+        /** Consume an item. */
         public void consume(T item);
     }
 
@@ -101,7 +91,6 @@ public class Yielder<T> implements AutoCloseable {
      * {@link Consumer} threads have terminated.
      */
     public Yielder(int queueSize, Producer<T> producer, Consumer<T> consumer) {
-        var boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
         executor = Executors.newFixedThreadPool(2, new ThreadFactory() {
             @Override
             public Thread newThread(Runnable r) {
@@ -111,6 +100,9 @@ public class Yielder<T> implements AutoCloseable {
                 return thread;
             }
         });
+
+        // Set up queue
+        var boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
 
         // Launch consumer thread
         consumerThreadFuture = executor.submit(new Callable<Void>() {
@@ -130,12 +122,13 @@ public class Yielder<T> implements AutoCloseable {
         });
 
         // Launch producer thread
+        producer.setQueue(boundedQueue);
         producerThreadFuture = executor.submit(new Callable<Void>() {
             @Override
             public Void call() throws Exception {
                 try {
                     // Launch producer
-                    producer.produce(new Receiver<T>(boundedQueue));
+                    producer.produce();
                 } finally {
                     // Send end of queue marker to consumer
                     boundedQueue.put(Optional.empty());
@@ -143,7 +136,6 @@ public class Yielder<T> implements AutoCloseable {
                 return null;
             }
         });
-
     }
 
     /** Close. Blocks on producer and consumer completing their work. */
