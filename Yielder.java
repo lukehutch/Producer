@@ -26,7 +26,6 @@
  * AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
  * OR OTHER DEALINGS IN THE SOFTWARE.
  */
-import java.io.OutputStream;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -42,18 +41,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Buffer an {@link OutputStream} in a separate process, to separate data generation from data compression or
- * writing to disk.
+ * A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support
+ * for the yield / generator pattern. Provides a bounded queue between the producer and consumer, which allows for
+ * buffering and flow control, and allowing for parallel pipelining between producer and consumer (so that the
+ * consumer can be working on consuming the previous item while the producer is working on producing the next item).
+ * 
+ * @author Luke Hutchison
  */
-public class Yielder<T> implements Iterable<T> {
+public abstract class Yielder<T> implements Iterable<T> {
     /** The queue. */
     private ArrayBlockingQueue<Optional<T>> boundedQueue;
 
     /** An executor service for the producer and consumer threads. */
     private ExecutorService executor;
-
-    /** The {@link Producer}. */
-    private Producer<T> producer;
 
     /** The {@link Future} used to await termination of the producer thread. */
     private Future<Void> producerThreadFuture;
@@ -64,76 +64,28 @@ public class Yielder<T> implements Iterable<T> {
     /** True when {@link close()} has been called. */
     private final AtomicBoolean isShutdown = new AtomicBoolean(false);
 
-    /** Producer. */
-    public static abstract class Producer<T> {
-        private ArrayBlockingQueue<Optional<T>> queue;
-
-        private void setQueue(ArrayBlockingQueue<Optional<T>> boundedQueue) {
-            this.queue = boundedQueue;
-        }
-
-        public final void yield(T item) {
-            try {
-                this.queue.put(Optional.of(item));
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        /** Producer method. Call {@link #yield(Object)} to send a produced item to the consumer. */
-        public abstract void produce() throws Exception;
-    }
-
-    /**
-     * {@link FunctionalInterface} for use with {@link Yielder} instead of a {@link Producer} (which can only be
-     * specified using anonymous inner class or subclass syntax).
-     */
-    @FunctionalInterface
-    public static interface ProducerLambda<T> {
-        public void produce() throws Exception;
-    }
-
-    /** Set up a {@link Yielder} ready to accept a {@link ProducerLambda} via a call to {@link #produce()}. */
+    /** Construct a {@link Yielder} with a bounded queue of the specified length, and launch the producer thread. */
     public Yielder(int queueSize) {
+        // Set up the bounded queue
         boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
+        // Start the producer thread
+        startProducerThread();
     }
 
-    /** Launch a {@link Producer} thread. */
-    public Yielder(int queueSize, Producer<T> producer) {
-        this(queueSize);
-
-        // Launch producer thread
-        if (producer == null) {
-            throw new IllegalArgumentException("producer is null");
-        }
-        this.producer = producer;
-        launchProducerThread();
-    }
-
-    /** Configure and launch a {@link Producer} thread. */
-    protected final void produce(ProducerLambda<T> producerLambda) {
-        if (producer != null) {
-            throw new IllegalArgumentException("Cannot call produce() twice");
-        }
-        producer = new Producer<T>() {
-            @Override
-            public void produce() throws Exception {
-                producerLambda.produce();
-            }
-        };
-        launchProducerThread();
-    }
+    /** Override this method with the producer code. */
+    protected abstract void produce();
 
     /** Yield an item (called by a {@link ProducerLambda}). */
-    public void yield(T item) {
-        if (producer == null) {
-            throw new IllegalArgumentException("Must call produce() first");
+    public final void yield(T item) {
+        try {
+            this.boundedQueue.put(Optional.of(item));
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-        producer.yield(item);
     }
 
-    /** Launch the {@link Producer} thread. */
-    private void launchProducerThread() {
+    /** Start the producer thread. */
+    private void startProducerThread() {
         // Create thread executor
         executor = Executors.newFixedThreadPool(1, new ThreadFactory() {
             @Override
@@ -145,13 +97,12 @@ public class Yielder<T> implements Iterable<T> {
         });
 
         // Launch producer thread
-        producer.setQueue(boundedQueue);
         producerThreadFuture = executor.submit(new Callable<Void>() {
             @Override
             public Void call() throws Exception {
                 try {
-                    // Launch producer
-                    producer.produce();
+                    // Execute producer method
+                    produce();
                 } finally {
                     // Send end of queue marker to consumer
                     boundedQueue.put(Optional.empty());
@@ -164,8 +115,8 @@ public class Yielder<T> implements Iterable<T> {
     }
 
     /**
-     * Shut down the producer thread. This is called automatically when {@link Iterator#hasNext()} returns false,
-     * i.e. when the producer has produced the last item and the consumer has consumed it.
+     * Shut down the producer thread. This is called automatically when the consumer's {@link Iterator#hasNext()}
+     * returns false, i.e. when the producer has produced the last item and the consumer has consumed it.
      */
     public void shutdownProducerThread() {
         if (!isShutdown.getAndSet(true)) {
@@ -204,7 +155,7 @@ public class Yielder<T> implements Iterable<T> {
             }
             executor = null;
             if (producerException != null) {
-                RuntimeException e = new RuntimeException("Exception in Producer");
+                RuntimeException e = new RuntimeException("Exception in producer");
                 if (producerException != null) {
                     e.addSuppressed(producerException);
                 }
@@ -213,7 +164,7 @@ public class Yielder<T> implements Iterable<T> {
         }
     }
 
-    /** Return an {@link Iterator} for the items produced by the {@link Producer}. */
+    /** Return an {@link Iterator} for the items produced by the producer. */
     @Override
     public Iterator<T> iterator() {
         var yielder = this;
@@ -226,7 +177,7 @@ public class Yielder<T> implements Iterable<T> {
                         next = boundedQueue.take();
                     } catch (InterruptedException e) {
                         // Cancel the producer thread if the consumer is interrupted
-                        producerThreadFuture.cancel(true);
+                        yielder.shutdownProducerThread();
                         throw new RuntimeException(e);
                     }
                 }
@@ -253,6 +204,7 @@ public class Yielder<T> implements Iterable<T> {
             public T next() {
                 Optional<T> _next = takeNext();
                 if (_next.isEmpty()) {
+                    yielder.shutdownProducerThread();
                     throw new IllegalArgumentException("No next item");
                 }
                 return _next.get();
