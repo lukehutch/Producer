@@ -9,7 +9,7 @@ A simple producer / consumer class for Java. Launches the producer in a separate
 * `Yielder<T>` implements `Iterable<T>`, but note both its `hasNext()` and `next()` methods are blocking calls.
 * The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns false, in order to shut down the producer thread. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will attempt to interrupt the producer thread.
 
-## Usage example
+## More complete example
 
 This example sets up a bounded queue of size `5`, and submits the integers `0` to `19` inclusive to the queue from the producer (launched in a new thread). These are then printed out by the consumer (the main thread).
 
@@ -18,6 +18,19 @@ Since the queue size is smaller than the number of submitted items, the producer
 ### Inner class syntax
 
 You can pass a `Producer<T>` to the `Yielder` constructor, and implement the abstract `produce()` method, calling `Producer#yield(T)` for each produced item. `Yielder<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result.
+
+The fundamental pattern is:
+
+```java
+Iterable<T> iterable = new Yielder<T>(queueSize, new Producer<T>() {
+    @Override
+    public void produce() {
+        yield(someT);
+    }
+});
+```
+
+For example:
 
 ```java
 for (Integer i : new Yielder<Integer>(/* queueSize = */ 5, new Producer<Integer>() {
@@ -39,6 +52,18 @@ System.out.println("Finished");
 ### Lambda syntax
 
 Alternatively, you can use lambda notation as follows. Note the use of double-brace initializer syntax `new Yielder<T>(N) {{ ... }}` wrapping a call to `Yielder#produce(() -> {})`. The call to `yield(T)` is now actually a call to `Yielder#yield(T)`, rather than `Producer#yield(T)` in the example above, which allows you to use a `FunctionalInterface` for the producer. The syntax is more unusual in this case, but there is less boilerplate than the above example -- pick whichever form you prefer.
+
+The fundamental pattern is:
+
+```java
+Iterable<T> iterable = new Yielder<T>(queueSize) {{
+    produce(() -> {
+        yield(someT);
+    });
+}};
+```
+
+For example:
 
 ```java
 for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
