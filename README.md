@@ -98,5 +98,5 @@ Finished
 
 ## Caveats
 
-* `Yielder<T>` implements `Iterable<T>`, but note that its `hasNext()` method is a blocking call.
-* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns false, in order to shut down the producer thread. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will interrupt the producer thread.
+* `Yielder<T>` implements `Iterable<T>`, but note both its `hasNext()` and `next()` methods are blocking calls.
+* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns false, in order to shut down the producer thread. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will attempt to interrupt the producer thread.
