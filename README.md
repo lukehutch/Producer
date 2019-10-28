@@ -21,7 +21,7 @@ for (Integer i : new Yielder<Integer>(/* queueSize = */ 5, new Producer<Integer>
         }
         System.out.println("Producer exiting");
     }
-})) {
+} )) {
     System.out.println("  Consuming " + i);
     Thread.sleep(200);
 }
@@ -40,15 +40,16 @@ for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
             yield(i);
         }
     });
-}}) {
+}} ) {
     System.out.println("  Consuming " + i);
     Thread.sleep(200);
 }
 System.out.println("Finished");
 ```
 
+### Output
 
-This produces the output:
+The above examples both produce approximately the following output (modulo nondeterminism):
 
 ```
 Producing 0
