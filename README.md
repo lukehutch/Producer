@@ -32,7 +32,7 @@ System.out.println("Finished");
 
 Alternatively, you can use lambda notation as follows. Note the use of double-brace initializer syntax `new Yielder<T>(N) {{ ... }}` wrapping a call to `Yielder#produce(() -> {})`. The call to `yield(T)` is now actually a call to `Yielder#yield(T)`, rather than `Producer#yield(T)` in the example above, which allows you to use a `FunctionalInterface` for the producer. The syntax is more unusual in this case, but there is less boilerplate than the above example -- pick whichever form you prefer.
 
-```
+```java
 for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
     produce(() -> {
         for (int i = 0; i < 20; i++) {
