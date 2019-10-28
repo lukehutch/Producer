@@ -169,7 +169,7 @@ public class Yielder<T> implements Iterable<T> {
      */
     public void shutdownProducerThread() {
         if (!isShutdown.getAndSet(true)) {
-            Exception producerException = null;
+            Throwable producerException = null;
             if (!producerThreadFuture.isDone()) {
                 // Cancel producer if it's still running
                 producerThreadFuture.cancel(true);
@@ -180,7 +180,7 @@ public class Yielder<T> implements Iterable<T> {
             } catch (CancellationException | InterruptedException e) {
                 // Ignore
             } catch (ExecutionException e) {
-                producerException = e;
+                producerException = e.getCause();
             }
             // Shut down executor service
             try {
@@ -204,7 +204,7 @@ public class Yielder<T> implements Iterable<T> {
             }
             executor = null;
             if (producerException != null) {
-                RuntimeException e = new RuntimeException("Exception in producer");
+                RuntimeException e = new RuntimeException("Exception in Producer");
                 if (producerException != null) {
                     e.addSuppressed(producerException);
                 }
