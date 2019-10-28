@@ -1,6 +1,6 @@
 # Yielder.java
 
-A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support for the `yield` / generator pattern. Provides a bounded queue between the producer and consumer, which allows for buffering and flow control.
+A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support for the `yield` / generator pattern. Provides a bounded queue between the producer and consumer, which allows for buffering and flow control, and allowing for parallel pipelining between producer and consumer (so that the consumer can be working on consuming the previous item while the producer is working on producing the next item).
 
 ## Caveats
 
@@ -9,8 +9,9 @@ A simple producer / consumer class for Java. Launches the producer in a separate
 
 ## Usage example
 
-This example sets up a bounded queue of size `5`, and submits the integers `0` to `19` inclusive to the queue from the `Producer`.
-These are then printed out by the `Consumer`.
+This example sets up a bounded queue of size `5`, and submits the integers `0` to `19` inclusive to the queue from the producer (launched in a new thread). These are then printed out by the consumer (the main thread).
+
+Since the queue size is smaller than the number of submitted items, the producer will block once the queue is full. The consumer will block on `hasNext()` when the queue is empty, as long as the producer is still running.
 
 ### Inner class syntax
 
