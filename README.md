@@ -34,7 +34,7 @@ Iterable<T> iterable = new Yielder<T>(queueSize) {
 For example:
 
 ```java
-for (var item : new Yielder<Integer>(/* queueSize = */ 5) {
+for (Integer item : new Yielder<Integer>(/* queueSize = */ 5) {
     @Override
     public void produce() {
         for (int i = 0; i < 20; i++) {
