@@ -23,18 +23,18 @@ You can pass a `Producer<T>` to the `Yielder` constructor, and implement the abs
 The fundamental pattern is:
 
 ```java
-Iterable<T> iterable = new Yielder<T>(queueSize, new Producer<T>() {
+Iterable<T> iterable = new Yielder<T>(queueSize) {
     @Override
     public void produce() {
         yield(someT);
     }
-});
+};
 ```
 
 For example:
 
 ```java
-for (Integer i : new Yielder<Integer>(/* queueSize = */ 5, new Producer<Integer>() {
+for (var item : new Yielder<Integer>(/* queueSize = */ 5) {
     @Override
     public void produce() {
         for (int i = 0; i < 20; i++) {
@@ -43,40 +43,8 @@ for (Integer i : new Yielder<Integer>(/* queueSize = */ 5, new Producer<Integer>
         }
         System.out.println("Producer exiting");
     }
-} )) {
-    System.out.println("  Consuming " + i);
-    Thread.sleep(200);
-}
-System.out.println("Finished");
-```
-
-### Lambda syntax
-
-Alternatively, you can use lambda notation as follows. Note the use of double-brace initializer syntax `new Yielder<T>(N) {{ ... }}` wrapping a call to `Yielder#produce(() -> {})`. The call to `yield(T)` is now actually a call to `Yielder#yield(T)`, rather than `Producer#yield(T)` in the example above, which allows you to use a `FunctionalInterface` for the producer. The syntax is more unusual in this case, but there is less boilerplate than the above example -- pick whichever form you prefer.
-
-The fundamental pattern is:
-
-```java
-Iterable<T> iterable = new Yielder<T>(queueSize) {{
-    produce(() -> {
-        yield(someT);
-    });
-}};
-```
-
-For example:
-
-```java
-for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
-    produce(() -> {
-        for (int i = 0; i < 20; i++) {
-            System.out.println("Producing " + i);
-            yield(i);
-        }
-        System.out.println("Producer exiting");
-    });
-}} ) {
-    System.out.println("  Consuming " + i);
+}) {
+    System.out.println("  Consuming " + item);
     Thread.sleep(200);
 }
 System.out.println("Finished");
@@ -84,7 +52,7 @@ System.out.println("Finished");
 
 ### Output
 
-The above examples both produce approximately the following output (modulo nondeterminism):
+The above example produce the following output (modulo nondeterminism):
 
 ```
 Producing 0
