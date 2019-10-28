@@ -80,7 +80,7 @@ public class Yielder<T> implements Iterable<T> {
             }
         }
 
-        /** Producer method. Call {@link #yield(Object)} to send a produced item to the {@link Consumer}. */
+        /** Producer method. Call {@link #yield(Object)} to send a produced item to the consumer. */
         public abstract void produce();
     }
 
