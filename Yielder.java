@@ -31,6 +31,7 @@ import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -80,7 +81,7 @@ public class Yielder<T> implements Iterable<T> {
         }
 
         /** Producer method. Call {@link #yield(Object)} to send a produced item to the consumer. */
-        public abstract void produce();
+        public abstract void produce() throws Exception;
     }
 
     /**
@@ -89,7 +90,7 @@ public class Yielder<T> implements Iterable<T> {
      */
     @FunctionalInterface
     public static interface ProducerLambda<T> {
-        public void produce();
+        public void produce() throws Exception;
     }
 
     /** Set up a {@link Yielder} ready to accept a {@link ProducerLambda} via a call to {@link #produce()}. */
@@ -116,7 +117,7 @@ public class Yielder<T> implements Iterable<T> {
         }
         producer = new Producer<T>() {
             @Override
-            public void produce() {
+            public void produce() throws Exception {
                 producerLambda.produce();
             }
         };
@@ -154,20 +155,31 @@ public class Yielder<T> implements Iterable<T> {
                 } finally {
                     // Send end of queue marker to consumer
                     boundedQueue.put(Optional.empty());
+                    // Cannot call shutdownProducerThread() here, since
+                    // we're running in the producer thread
                 }
                 return null;
             }
         });
     }
 
-    /** Shut down the producer thread and the {@link ExecutorService}. */
-    private void shutdownProducerThread() {
+    /**
+     * Shut down the producer thread. This is called automatically when {@link Iterator#hasNext()} returns false,
+     * i.e. when the producer has produced the last item and the consumer has consumed it.
+     */
+    public void shutdownProducerThread() {
         if (!isShutdown.getAndSet(true)) {
             Exception producerException = null;
+            if (!producerThreadFuture.isDone()) {
+                // Cancel producer if it's still running
+                producerThreadFuture.cancel(true);
+            }
             try {
                 // Block on producer thread completion
                 producerThreadFuture.get();
-            } catch (InterruptedException | ExecutionException e) {
+            } catch (CancellationException | InterruptedException e) {
+                // Ignore
+            } catch (ExecutionException e) {
                 producerException = e;
             }
             // Shut down executor service
@@ -213,6 +225,8 @@ public class Yielder<T> implements Iterable<T> {
                     try {
                         next = boundedQueue.take();
                     } catch (InterruptedException e) {
+                        // Cancel the producer thread if the consumer is interrupted
+                        producerThreadFuture.cancel(true);
                         throw new RuntimeException(e);
                     }
                 }
