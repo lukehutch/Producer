@@ -1,32 +1,18 @@
 # Yielder.java
 
-A simple producer / consumer class for Java, supporting the `yield` / generator pattern.
-
-## Semantics
-
-* `Yielder` launches separate threads for the `Producer` and `Consumer`, and sets up a bounded blocking FIFO queue between the two threads.
-* The `Producer` blocks when the queue is full, the `Consumer` blocks when the queue is empty.
-* The `Producer` is passed a `Receiver` object, which it may `yield(T)` objects of type `<T>` to, to send them to the `Consumer` via the FIFO queue.
-* The `Consumer` has a `consume(T)` object that is called for each item produced by the `Producer`.
-* When the `Producer` exits, an end of queue marker is sent to the `Consumer`, and the `Producer` thread shuts down.
-* When the `Consumer` has consumed all items, and reaches the end of queue marker, the `Consumer` thread is shut down.
-* The `close()` method of `Yielder` blocks on both the `Producer` and `Consumer` finishing their work and shutting down.
-
-## Caveats
-
-* If the `Producer` or `Consumer` throws an unchecked exception, then the `close()` method of `Yielder` will wrap the exception with a `RuntimeException`.
-* The `Producer` and `Consumer` threads are considered uninterruptible.
-* The `Consumer` does not implement a `take(N)` method, terminating the queue early if it has received enough items (i.e. it is assumed the `Consumer` will always consume all items).
-
-These caveats are all to minimize the number of `catch` clauses needed to use this class under normal circumstances (e.g. to prevent the need to catch `InterruptedException` or `ExecutionException`).
+A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support for the `yield` / generator pattern. Provides a bounded queue between the producer and consumer, which allows for buffering and flow control.
 
 ## Usage example
 
 This example sets up a bounded queue of size `5`, and submits the integers `0` to `19` inclusive to the queue from the `Producer`.
 These are then printed out by the `Consumer`.
 
+### Inner class syntax
+
+You can pass a `Producer<T>` to the `Yielder` constructor, and implement the abstract `produce()` method, calling `Producer#yield(T)` for each produced item. `Yielder<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result.
+
 ```java
-try (Yielder<Integer> yielder = new Yielder<Integer>(5, new Producer<Integer>() {
+for (Integer i : new Yielder<Integer>(/* queueSize = */ 5, new Producer<Integer>() {
     @Override
     public void produce() {
         for (int i = 0; i < 20; i++) {
@@ -35,21 +21,32 @@ try (Yielder<Integer> yielder = new Yielder<Integer>(5, new Producer<Integer>() 
         }
         System.out.println("Producer exiting");
     }
-}, new Consumer<Integer>() {
-    @Override
-    public void consume(Integer item) {
-        System.out.println("  Consuming " + item);
-        try {
-            Thread.sleep(200);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
 })) {
-    // Block on producer and consumer exit
+    System.out.println("  Consuming " + i);
+    Thread.sleep(200);
 }
 System.out.println("Finished");
 ```
+
+### Lambda syntax
+
+Alternatively, you can use lambda notation as follows. Note the use of double-brace initializer syntax `new Yielder<T>(N) {{ ... }}` wrapping a call to `Yielder#produce(() -> {})`. The call to `yield(T)` is now actually a call to `Yielder#yield(T)`, rather than `Producer#yield(T)` in the example above, which allows you to use a `FunctionalInterface` for the producer. The syntax is more unusual in this case, but there is less boilerplate than the above example -- pick whichever form you prefer.
+
+```
+for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
+    produce(() -> {
+        for (int i = 0; i < 20; i++) {
+            System.out.println("Producing " + i);
+            yield(i);
+        }
+    });
+}}) {
+    System.out.println("  Consuming " + i);
+    Thread.sleep(200);
+}
+System.out.println("Finished");
+```
+
 
 This produces the output:
 
@@ -97,3 +94,8 @@ Producer exiting
   Consuming 19
 Finished
 ```
+
+## Caveats
+
+* `Yielder<T>` implements `Iterable<T>`, but note that its `hasNext()` method is a blocking call.
+* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns false, in order to shut down the producer thread. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will interrupt the producer thread.
