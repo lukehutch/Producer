@@ -22,8 +22,8 @@ These caveats are all to minimize the number of `catch` clauses needed to use th
 
 ## Usage example
 
-This example sets up a bounded queue of size 5 items, and submit the integers 0 to 19 inclusive to the queue from the producer.
-These are then printed out by the consumer.
+This example sets up a bounded queue of size `5` items, and submits the integers `0` to `19` inclusive to the queue from the `Producer`.
+These are then printed out by the `Consumer`.
 
 ```java
 try (Yielder<Integer> yielder = new Yielder<>(5, receiver -> {
