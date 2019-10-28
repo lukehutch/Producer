@@ -46,8 +46,14 @@ import java.util.function.Consumer;
  * writing to disk.
  */
 public class Yielder<T> implements Iterable<T> {
+    /** The queue. */
+    private ArrayBlockingQueue<Optional<T>> boundedQueue;
+
     /** An executor service for the producer and consumer threads. */
     private ExecutorService executor;
+
+    /** The {@link Producer}. */
+    private Producer<T> producer;
 
     /** The {@link Future} used to await termination of the producer thread. */
     private Future<Void> producerThreadFuture;
@@ -57,9 +63,6 @@ public class Yielder<T> implements Iterable<T> {
 
     /** True when {@link close()} has been called. */
     private final AtomicBoolean isShutdown = new AtomicBoolean(false);
-
-    /** The FIFO queue. */
-    private ArrayBlockingQueue<Optional<T>> boundedQueue;
 
     /** Producer. */
     public static abstract class Producer<T> {
@@ -82,11 +85,55 @@ public class Yielder<T> implements Iterable<T> {
     }
 
     /**
-     * Construct a producer-consumer pipeline. Assign in a try-with-resources block. When the
-     * {@link Yielder#close()} method is called, the calling thread will block until the {@link Producer} and
-     * {@link Consumer} threads have terminated.
+     * {@link FunctionalInterface} for use with {@link Yielder} instead of a {@link Producer} (which can only be
+     * specified using anonymous inner class or subclass syntax).
      */
+    @FunctionalInterface
+    public static interface ProducerLambda<T> {
+        public void produce();
+    }
+
+    /** Set up a {@link Yielder} ready to accept a {@link ProducerLambda} via a call to {@link #produce()}. */
+    public Yielder(int queueSize) {
+        boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
+    }
+
+    /** Launch a {@link Producer} thread. */
     public Yielder(int queueSize, Producer<T> producer) {
+        this(queueSize);
+
+        // Launch producer thread
+        if (producer == null) {
+            throw new IllegalArgumentException("producer is null");
+        }
+        this.producer = producer;
+        launchProducerThread();
+    }
+
+    /** Configure and launch a {@link Producer} thread. */
+    protected final void produce(ProducerLambda<T> producerLambda) {
+        if (producer != null) {
+            throw new IllegalArgumentException("Cannot call produce() twice");
+        }
+        producer = new Producer<T>() {
+            @Override
+            public void produce() {
+                producerLambda.produce();
+            }
+        };
+        launchProducerThread();
+    }
+
+    /** Yield an item (called by a {@link ProducerLambda}). */
+    public void yield(T item) {
+        if (producer == null) {
+            throw new IllegalArgumentException("Must call produce() first");
+        }
+        producer.yield(item);
+    }
+
+    /** Launch the {@link Producer} thread. */
+    private void launchProducerThread() {
         // Create thread executor
         executor = Executors.newFixedThreadPool(1, new ThreadFactory() {
             @Override
@@ -96,9 +143,6 @@ public class Yielder<T> implements Iterable<T> {
                 return thread;
             }
         });
-
-        // Set up queue
-        boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
 
         // Launch producer thread
         producer.setQueue(boundedQueue);
@@ -117,8 +161,8 @@ public class Yielder<T> implements Iterable<T> {
         });
     }
 
-    /** Shut down thread executor. */
-    private void shutdown() {
+    /** Shut down the producer thread and the {@link ExecutorService}. */
+    private void shutdownProducerThread() {
         if (!isShutdown.getAndSet(true)) {
             Exception producerException = null;
             try {
@@ -187,7 +231,7 @@ public class Yielder<T> implements Iterable<T> {
                 boolean empty = getNext().isEmpty();
                 if (empty) {
                     // Shut down thread pool once there are no more items
-                    yielder.shutdown();
+                    yielder.shutdownProducerThread();
                 }
                 return !empty;
             }
@@ -201,53 +245,5 @@ public class Yielder<T> implements Iterable<T> {
                 return _next.get();
             }
         };
-    }
-
-    /** {@link FunctionalInterface} for use with {@link Yielderr}. */
-    @FunctionalInterface
-    public static interface Producerr<T> {
-        public void produce();
-    }
-
-    /**
-     * Wrapper for {@link Yielder} that allows the producer to be supplied as a {@link FunctionalInterface}, to cut
-     * down on the inner class declaration boilerplate.
-     */
-    public static abstract class Yielderr<T> implements Iterable<T> {
-        private final int queueSize;
-        private Yielder<T> yielder;
-        private Producer<T> producer;
-
-        public Yielderr(int queueSize) {
-            this.queueSize = queueSize;
-        }
-
-        protected final void produce(Producerr<T> producerr) {
-            if (producer != null) {
-                throw new IllegalArgumentException("Cannot call produce() twice");
-            }
-            producer = new Producer<T>() {
-                @Override
-                public void produce() {
-                    producerr.produce();
-                }
-            };
-            yielder = new Yielder<T>(queueSize, producer);
-        }
-
-        public void yield(T item) {
-            if (producer == null) {
-                throw new IllegalArgumentException("Must call produce() first");
-            }
-            producer.yield(item);
-        }
-
-        @Override
-        public Iterator<T> iterator() {
-            if (yielder == null) {
-                throw new IllegalArgumentException("Must call produce() first");
-            }
-            return yielder.iterator();
-        }
     }
 }
