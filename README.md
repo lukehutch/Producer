@@ -26,34 +26,12 @@ This example sets up a bounded queue of size `5`, and submits the integers `0` t
 These are then printed out by the `Consumer`.
 
 ```java
-try (Yielder<Integer> yielder = new Yielder<>(5, receiver -> {
-    for (int i = 0; i < 20; i++) {
-        System.out.println("Producing " + i);
-        receiver.yield(i);
-    }
-    System.out.println("Producer exiting");
-}, item -> {
-    System.out.println("  Consuming " + item);
-    try {
-        Thread.sleep(200);
-    } catch (InterruptedException e) {
-        throw new RuntimeException(e);
-    }
-})) {
-    // Block and wait for producer and consumer exit
-}
-System.out.println("Finished");
-```
-
-or, using traditional anonymous inner classes:
-
-```java
-try (Yielder<Integer> yielder = new Yielder<>(5, new Producer<Integer>() {
+try (Yielder<Integer> yielder = new Yielder<Integer>(5, new Producer<Integer>() {
     @Override
-    public void produce(Receiver<Integer> receiver) {
+    public void produce() {
         for (int i = 0; i < 20; i++) {
             System.out.println("Producing " + i);
-            receiver.yield(i);
+            yield(i);
         }
         System.out.println("Producer exiting");
     }
@@ -68,7 +46,7 @@ try (Yielder<Integer> yielder = new Yielder<>(5, new Producer<Integer>() {
         }
     }
 })) {
-    // Block and wait for producer and consumer exit
+    // Block on producer and consumer exit
 }
 System.out.println("Finished");
 ```
