@@ -72,6 +72,7 @@ for (Integer i : new Yielder<Integer>(/* queueSize = */ 5) {{
             System.out.println("Producing " + i);
             yield(i);
         }
+        System.out.println("Producer exiting");
     });
 }} ) {
     System.out.println("  Consuming " + i);
