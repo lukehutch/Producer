@@ -73,7 +73,7 @@ public abstract class Yielder<T> implements Iterable<T> {
     }
 
     /** Override this method with the producer code. */
-    protected abstract void produce();
+    protected abstract void produce() throws Exception;
 
     /** Yield an item (called by a {@link ProducerLambda}). */
     public final void yield(T item) {
