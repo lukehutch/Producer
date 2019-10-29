@@ -77,6 +77,9 @@ public abstract class Yielder<T> implements Iterable<T> {
 
     /** Yield an item (called by a {@link ProducerLambda}). */
     public final void yield(T item) {
+        if (isShutdown.get()) {
+            throw new RuntimeException("Tried to yield a value after producer thread was shut down");
+        }
         try {
             this.boundedQueue.put(Optional.of(item));
         } catch (InterruptedException e) {
