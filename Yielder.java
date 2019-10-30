@@ -39,6 +39,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support
@@ -63,6 +64,9 @@ public abstract class Yielder<T> implements Iterable<T> {
 
     /** True when {@link close()} has been called. */
     private final AtomicBoolean isShutdown = new AtomicBoolean(false);
+
+    /** Non-null when the producer has thrown a non-caught exception. */
+    private AtomicReference<Throwable> producerException = new AtomicReference<>();
 
     /** Construct a {@link Yielder} with a bounded queue of the specified length, and launch the producer thread. */
     public Yielder(int queueSize) {
@@ -106,15 +110,36 @@ public abstract class Yielder<T> implements Iterable<T> {
                 try {
                     // Execute producer method
                     produce();
+                } catch (InterruptedException e) {
+                    // Ignore
+                } catch (Exception e) {
+                    // For any other exception, set producer exception
+                    producerException.set(e);
                 } finally {
-                    // Send end of queue marker to consumer
+                    // Always send end of queue marker to consumer when producer exits
                     boundedQueue.put(Optional.empty());
-                    // Cannot call shutdownProducerThread() here, since
-                    // we're running in the producer thread
+
+                    // Cannot call shutdownProducerThread() from the producer thread,
+                    // so spawn a new thread to optimistically shut down the producer.
+                    if (!isShutdown.get()) {
+                        new Thread() {
+                            public void run() {
+                                shutdownProducerThread();
+                            };
+                        }.start();
+                    }
                 }
                 return null;
             }
         });
+    }
+
+    /** Cancel the producer thread. */
+    private void cancelProducerThread() {
+        // Cancel producer if it's still running. This will interrupt attempts to put new values in the queue.
+        if (!producerThreadFuture.isDone()) {
+            producerThreadFuture.cancel(true);
+        }
     }
 
     /**
@@ -123,18 +148,14 @@ public abstract class Yielder<T> implements Iterable<T> {
      */
     public void shutdownProducerThread() {
         if (!isShutdown.getAndSet(true)) {
-            Throwable producerException = null;
-            if (!producerThreadFuture.isDone()) {
-                // Cancel producer if it's still running
-                producerThreadFuture.cancel(true);
-            }
+            cancelProducerThread();
             try {
                 // Block on producer thread completion
                 producerThreadFuture.get();
             } catch (CancellationException | InterruptedException e) {
                 // Ignore
             } catch (ExecutionException e) {
-                producerException = e.getCause();
+                producerException.set(e.getCause());
             }
             // Shut down executor service
             try {
@@ -157,20 +178,12 @@ public abstract class Yielder<T> implements Iterable<T> {
                 }
             }
             executor = null;
-            if (producerException != null) {
-                RuntimeException e = new RuntimeException("Exception in producer");
-                if (producerException != null) {
-                    e.addSuppressed(producerException);
-                }
-                throw e;
-            }
         }
     }
 
     /** Return an {@link Iterator} for the items produced by the producer. */
     @Override
     public Iterator<T> iterator() {
-        var yielder = this;
         return new Iterator<T>() {
             private Optional<T> next;
 
@@ -179,10 +192,19 @@ public abstract class Yielder<T> implements Iterable<T> {
                     try {
                         next = boundedQueue.take();
                     } catch (InterruptedException e) {
-                        // Cancel the producer thread if the consumer is interrupted
-                        yielder.shutdownProducerThread();
+                        // If the consumer is interrupted, cancel the producer thread
+                        cancelProducerThread();
+                        // Re-set the interrupt status of the current thread
+                        Thread.currentThread().interrupt();
+                        // Re-throw as RuntimeException, since the iterator sequence
+                        // will end earlier than expected, and the receiver should not 
+                        // assume the returned sequence is the full sequence
                         throw new RuntimeException(e);
                     }
+                }
+                // If producer threw an exception, re-throw it in the consumer
+                if (producerException.get() != null) {
+                    throw new RuntimeException("Producer threw an exception", producerException.get());
                 }
                 return next;
             }
@@ -195,19 +217,13 @@ public abstract class Yielder<T> implements Iterable<T> {
 
             @Override
             public boolean hasNext() {
-                boolean empty = getNext().isEmpty();
-                if (empty) {
-                    // Shut down thread pool once there are no more items
-                    yielder.shutdownProducerThread();
-                }
-                return !empty;
+                return !getNext().isEmpty();
             }
 
             @Override
             public T next() {
                 Optional<T> _next = takeNext();
                 if (_next.isEmpty()) {
-                    yielder.shutdownProducerThread();
                     throw new IllegalArgumentException("No next item");
                 }
                 return _next.get();
