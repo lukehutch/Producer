@@ -53,7 +53,7 @@ System.out.println("Finished");
 
 ### Output
 
-The above example produces the following output (modulo nondeterminism). Note how the first five items are produced, filling the queue, before the consumer has a chance to start iterating through the queue items. The producer subsequently blocks, waiting for an empty slot in the queue before it can produce another item.
+The above example produces the following output (modulo nondeterminism). Note how the first five items are produced, filling the queue, before the consumer has a chance to start iterating through the queue items (although if the consumer thread (the main thread) had started iterating more quickly, the consumer could have started consuming even after the first item had been produced). The producer subsequently blocks, waiting for an empty slot in the queue before it can produce another item.
 
 ```
 Producing 0
