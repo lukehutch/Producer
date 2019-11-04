@@ -7,8 +7,8 @@ A simple producer / consumer class for Java. Launches the producer in a separate
 ## Caveats
 
 * `Yielder<T>` implements `Iterable<T>`, but note that both its `hasNext()` and `next()` methods become blocking calls (which is not usual behavior for these methods).
-* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns false, in order to shut down the producer thread. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will attempt to interrupt the producer thread.
-* If the producer throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`.
+* If the producer throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`. (This is also not normal behavior for these methods.)
+* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread.
 
 ## Example usage
 
