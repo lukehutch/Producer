@@ -4,22 +4,11 @@ A simple producer / consumer class for Java. Launches the producer in a separate
 
 **See also: [`PipelinedOutputStream`](https://github.com/lukehutch/PipelinedOutputStream)**
 
-## Caveats
-
-* `Yielder<T>` implements `Iterable<T>`, in other words `Yielder#iterator()` returns an `Iterator<T>` with methods `boolean hasNext()` and `T next()`. However these methods have semantics that are unusual compared to most Java iterators:
-  * `hasNext()` may block -- the producer will block when calling `yield()` if the queue is full, whereas the consumer will block on `hasNext()` if the queue is empty.
-  * If the producer thread throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`.
-* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread.
-
 ## Example usage
 
 This example sets up a bounded queue of size `5`, and submits the integers `0` to `19` inclusive to the queue from the producer (launched in a new thread). These are then printed out by the consumer (the main thread).
 
 Since the queue size is smaller than the number of submitted items, the producer will block once the queue is full. The consumer will block on `hasNext()` when the queue is empty, as long as the producer is still running.
-
-### Inner class syntax
-
-You can pass a `Producer<T>` to the `Yielder` constructor, and implement the abstract `produce()` method, calling `Producer#yield(T)` for each produced item. `Yielder<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result.
 
 The fundamental pattern is:
 
@@ -32,7 +21,7 @@ Iterable<T> iterable = new Yielder<T>(queueSize) {
 };
 ```
 
-For example:
+`Yielder<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result. For example:
 
 ```java
 for (Integer item : new Yielder<Integer>(/* queueSize = */ 5) {
@@ -99,3 +88,10 @@ Producer exiting
   Consuming 19
 Finished
 ```
+
+## Caveats
+
+* `Yielder<T>` implements `Iterable<T>`, in other words `Yielder#iterator()` returns an `Iterator<T>` with methods `boolean hasNext()` and `T next()`. However these methods have semantics that are unusual compared to most Java iterators:
+  * `hasNext()` may block -- the producer will block when calling `yield()` if the queue is full, whereas the consumer will block on `hasNext()` if the queue is empty.
+  * If the producer thread throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`.
+* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread.
