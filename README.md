@@ -16,7 +16,7 @@ The fundamental pattern is:
 Iterable<T> iterable = new Yielder<T>(queueSize) {
     @Override
     public void produce() {
-        T someT = getNewT();
+        T someT = makeNewT();
         yield(someT);
     }
 };
