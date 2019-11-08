@@ -95,4 +95,22 @@ Finished
 * `Yielder<T>` implements `Iterable<T>`, in other words `Yielder#iterator()` returns an `Iterator<T>` with methods `boolean hasNext()` and `T next()`. However these methods have semantics that are unusual compared to most Java iterators:
   * `hasNext()` may block -- the producer will block when calling `yield()` if the queue is full, whereas the consumer will block on `hasNext()` if the queue is empty.
   * If the producer thread throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`.
-* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread.
+* The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread, and then clear the queue.
+* If you do call `Yielder#shutdownProducerThread()` from the consumer, then when the blocking call to `yield(T)` is interrupted, the `InterruptedException` is thrown from `yield(T)` wrapped in a `RuntimeException`. This is so that `yield(T)` does not have to declare `throws InterruptedException`, which would create a lot of extra boilerplate in the most common usecase, where the consumer never tries to interrupt the producer. This `RuntimeException` is caught by the caller of the `produce()` method, and triggers the shutdown of the producer thread, and the clearing of any un-consumed items in the queue. To properly handle interruption (e.g. if you need to clean up resources), use `try...finally` around the `yield(T)` call, or catch the wrapped exception directly:
+
+```java
+Iterable<T> iterable = new Yielder<T>(queueSize) {
+    @Override
+    public void produce() {
+        T someT = makeNewT();
+        try {
+            yield(someT);
+        } catch (RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                // yield call was interrupted by consumer
+            }
+            throw e;
+        }
+    }
+};
+```
