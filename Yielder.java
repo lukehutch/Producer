@@ -29,7 +29,6 @@
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -59,8 +58,8 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** The {@link Future} used to await termination of the producer thread. */
     private Future<Void> producerThreadFuture;
 
-    /** True when {@link close()} has been called. */
-    private final AtomicBoolean isShutdown = new AtomicBoolean(false);
+    /** True when the producer thread has been shut down. */
+    private final AtomicBoolean producerIsShutdown = new AtomicBoolean(false);
 
     /** Non-null when the producer has thrown a non-caught exception. */
     private AtomicReference<Throwable> producerException = new AtomicReference<>();
@@ -78,12 +77,15 @@ public abstract class Yielder<T> implements Iterable<T> {
 
     /** Yield an item (called by a {@link ProducerLambda}). */
     public final void yield(T item) {
-        if (isShutdown.get()) {
-            throw new RuntimeException("Tried to yield a value after producer thread was shut down");
+        if (producerIsShutdown.get()) {
+            // If producer is already shut down, simulate boundedQueue.put() getting interrupted below
+            throw new RuntimeException(new InterruptedException());
         }
         try {
             this.boundedQueue.put(Optional.of(item));
         } catch (InterruptedException e) {
+            // Interrupted by consumer calling shutdownProducerThread() -- need to wrap the InterruptedException
+            // in a RuntimeException, so that yield() does not need to declare "throws InterruptedException"
             throw new RuntimeException(e);
         }
     }
@@ -115,45 +117,41 @@ public abstract class Yielder<T> implements Iterable<T> {
         executor = Executors.newFixedThreadPool(1, new DaemonThreadFactory("Producer"));
 
         // Launch producer thread
-        producerThreadFuture = executor.submit(new Callable<Void>() {
-            @Override
-            public Void call() throws Exception {
+        producerThreadFuture = executor.submit(() -> {
+            boolean normalTermination = false;
+            try {
                 try {
-                    boolean cleanExit = false;
-                    try {
-                        // Execute producer method
-                        produce();
-                        cleanExit = true;
-                    } catch (InterruptedException e) {
-                        // Ignore
-                    } catch (RuntimeException e) {
-                        if (e.getCause() instanceof InterruptedException) {
-                            // Got InterruptedException wrapped in RuntimeException (from yield()), ignore
-                        } else {
-                            // For any other RuntimeException, set producer exception
-                            producerException.set(e);
-                        }
-                    } catch (Exception e) {
-                        // For any other exception, set producer exception
-                        producerException.set(e);
-                    }
-                    if (!cleanExit) {
-                        // Need to clear the queue on any exception so that the final empty marker doesn't block
-                        boundedQueue.clear();
-                    }
-                } finally {
-                    // Always send end of queue marker to consumer when producer exits
+                    // Execute producer method
+                    produce();
+                    // On normal termination, send end-of-queue marker
                     boundedQueue.put(Optional.empty());
-
-                    // Cannot call shutdownProducerThread() from the producer thread,
-                    // so spawn a new thread to optimistically shut down the producer.
-                    if (!isShutdown.get()) {
-                        new DaemonThreadFactory("Producer-Shutdown").newThread(() -> shutdownProducerThread())
-                                .start();
+                    // After end-of-queue marker has been successfully written without interruption,
+                    // record normal termination
+                    normalTermination = true;
+                } catch (InterruptedException e1) {
+                    // Ignore
+                } catch (RuntimeException e2) {
+                    if (e2.getCause() instanceof InterruptedException) {
+                        // Got InterruptedException wrapped in RuntimeException (from yield()), ignore
+                    } else {
+                        // For any other RuntimeException, set producer exception
+                        producerException.set(e2);
                     }
+                } catch (Exception e3) {
+                    // For any other exception, set producer exception
+                    producerException.set(e3);
                 }
-                return null;
+            } finally {
+                // Shut down producer, if it is not already shut down
+                if (!producerIsShutdown.get()) {
+                    // If producer exited early due to interruption or throwing an exception,
+                    // then clear the queue in shutdownProducerThread().
+                    boolean clearQueue = !normalTermination;
+                    shutdownProducerThread(clearQueue);
+                }
             }
+            // Return null so that Callable lambda is submitted, rather than Runnable
+            return null;
         });
     }
 
@@ -166,41 +164,70 @@ public abstract class Yielder<T> implements Iterable<T> {
     }
 
     /**
-     * Shut down the producer thread. This is called automatically when the consumer's {@link Iterator#hasNext()}
-     * returns false, i.e. when the producer has produced the last item and the consumer has consumed it.
+     * Initiate immediate termination -- interrupt and shut down the producer thread, and clear the queue.
      */
     public void shutdownProducerThread() {
-        if (!isShutdown.getAndSet(true)) {
-            cancelProducerThread();
-            try {
-                // Block on producer thread completion
-                producerThreadFuture.get();
-            } catch (CancellationException | InterruptedException e) {
-                // Ignore
-            } catch (ExecutionException e) {
-                producerException.set(e.getCause());
-            }
-            // Shut down executor service
-            try {
-                executor.shutdown();
-            } catch (final SecurityException e) {
-                // Ignore
-            }
-            boolean terminated = false;
-            try {
-                // Await termination
-                terminated = executor.awaitTermination(5000, TimeUnit.MILLISECONDS);
-            } catch (final InterruptedException e) {
-                // Ignore
-            }
-            if (!terminated) {
+        shutdownProducerThread(/* clearQueue = */ true);
+    }
+
+    /**
+     * Shut down the producer thread and clear the queue. The only time clearQueue should be false is if the
+     * producer terminates normally, and has written its own end-of-queue marker. For all other situations (where
+     * termination is abnormal, due to exception, or early, due to the consumer calling
+     * {@link #shutdownProducerThread()}), the queue should be cleared so that the end-of-queue marker can be
+     * written without blocking.
+     */
+    private void shutdownProducerThread(boolean clearQueue) {
+        if (!producerIsShutdown.getAndSet(true)) {
+            // Shut down producer in a new thread, so that yielders can be chained together and all shut their
+            // upstream producer down without any danger that killing an upstream thread will leave the thread
+            // pool in an idle and un-shutdown state.
+            new DaemonThreadFactory("Producer-Shutdown").newThread(() -> {
+                cancelProducerThread();
                 try {
-                    executor.shutdownNow();
-                } catch (final SecurityException e) {
-                    throw new RuntimeException(e);
+                    // Block on producer thread completion
+                    producerThreadFuture.get();
+                } catch (CancellationException | InterruptedException e) {
+                    // Ignore
+                } catch (ExecutionException e) {
+                    producerException.set(e.getCause());
                 }
-            }
-            executor = null;
+                if (clearQueue) {
+                    // Clear the queue after the producer thread has shut down
+                    boundedQueue.clear();
+                    // Then push the end-of-queue marker so that the consumer always terminates
+                    // (if clearQueue is false, the end-of-queue marker has already been pushed by the producer
+                    // thread without clearing the queue, which is important since it is only the producer thread
+                    // that should block on a full queue) 
+                    try {
+                        boundedQueue.put(Optional.empty());
+                    } catch (InterruptedException e1) {
+                        // Should not happen
+                        throw new RuntimeException("Could not push end-of-queue marker");
+                    }
+                }
+                // Shut down executor service
+                try {
+                    executor.shutdown();
+                } catch (final SecurityException e) {
+                    // Ignore
+                }
+                boolean terminated = false;
+                try {
+                    // Await termination
+                    terminated = executor.awaitTermination(5000, TimeUnit.MILLISECONDS);
+                } catch (final InterruptedException e) {
+                    // Ignore
+                }
+                if (!terminated) {
+                    try {
+                        executor.shutdownNow();
+                    } catch (final SecurityException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                executor = null;
+            }).start();
         }
     }
 
