@@ -75,7 +75,13 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** Override this method with the producer code. */
     protected abstract void produce() throws Exception;
 
-    /** Yield an item (called by a {@link ProducerLambda}). */
+    /**
+     * Yield an item to the consumer.
+     * 
+     * @throws RuntimeException If the producer thread is interrupted (by calling {@link #shutdownProducerThread()},
+     *                          this method will throw {@link RuntimeException} with the
+     *                          {@link InterruptedException} as the cause.
+     */
     public final void yield(T item) {
         if (producerIsShutdown.get()) {
             // If producer is already shut down, simulate boundedQueue.put() getting interrupted below
