@@ -130,3 +130,5 @@ Iterable<T> iterable = new Yielder<T>(queueSize) {
     }
 };
 ```
+
+If you don't re-throw the wrapped `InterruptedException`, then if the producer thread is interrupted by the consumer, the producer thread will be shut down after `produce()` exits, but any un-consumed items will not be cleared from the queue (so they could still be consumed by the consumer).
