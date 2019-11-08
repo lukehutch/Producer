@@ -59,9 +59,6 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** The {@link Future} used to await termination of the producer thread. */
     private Future<Void> producerThreadFuture;
 
-    /** Used to generate unique thread names. */
-    private static final AtomicInteger threadIndex = new AtomicInteger();
-
     /** True when {@link close()} has been called. */
     private final AtomicBoolean isShutdown = new AtomicBoolean(false);
 
@@ -91,30 +88,59 @@ public abstract class Yielder<T> implements Iterable<T> {
         }
     }
 
+    /** Create named daemon threads */
+    private static class DaemonThreadFactory implements ThreadFactory {
+        /** The name prefix. */
+        private String namePrefix;
+
+        /** Used to generate unique thread names. */
+        private static final AtomicInteger threadIndex = new AtomicInteger();
+
+        /** Constructor */
+        public DaemonThreadFactory(String namePrefix) {
+            this.namePrefix = namePrefix;
+        }
+
+        @Override
+        public Thread newThread(Runnable r) {
+            final Thread thread = new Thread(r, namePrefix + "-" + threadIndex.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        }
+    }
+
     /** Start the producer thread. */
     private void startProducerThread() {
         // Create thread executor
-        executor = Executors.newFixedThreadPool(1, new ThreadFactory() {
-            @Override
-            public Thread newThread(Runnable r) {
-                final Thread thread = new Thread(r, "Producer-" + threadIndex.getAndIncrement());
-                thread.setDaemon(true);
-                return thread;
-            }
-        });
+        executor = Executors.newFixedThreadPool(1, new DaemonThreadFactory("Producer"));
 
         // Launch producer thread
         producerThreadFuture = executor.submit(new Callable<Void>() {
             @Override
             public Void call() throws Exception {
                 try {
-                    // Execute producer method
-                    produce();
-                } catch (InterruptedException e) {
-                    // Ignore
-                } catch (Exception e) {
-                    // For any other exception, set producer exception
-                    producerException.set(e);
+                    boolean cleanExit = false;
+                    try {
+                        // Execute producer method
+                        produce();
+                        cleanExit = true;
+                    } catch (InterruptedException e) {
+                        // Ignore
+                    } catch (RuntimeException e) {
+                        if (e.getCause() instanceof InterruptedException) {
+                            // Got InterruptedException wrapped in RuntimeException (from yield()), ignore
+                        } else {
+                            // For any other RuntimeException, set producer exception
+                            producerException.set(e);
+                        }
+                    } catch (Exception e) {
+                        // For any other exception, set producer exception
+                        producerException.set(e);
+                    }
+                    if (!cleanExit) {
+                        // Need to clear the queue on any exception so that the final empty marker doesn't block
+                        boundedQueue.clear();
+                    }
                 } finally {
                     // Always send end of queue marker to consumer when producer exits
                     boundedQueue.put(Optional.empty());
@@ -122,11 +148,8 @@ public abstract class Yielder<T> implements Iterable<T> {
                     // Cannot call shutdownProducerThread() from the producer thread,
                     // so spawn a new thread to optimistically shut down the producer.
                     if (!isShutdown.get()) {
-                        new Thread() {
-                            public void run() {
-                                shutdownProducerThread();
-                            };
-                        }.start();
+                        new DaemonThreadFactory("Producer-Shutdown").newThread(() -> shutdownProducerThread())
+                                .start();
                     }
                 }
                 return null;
