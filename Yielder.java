@@ -267,7 +267,11 @@ public abstract class Yielder<T> implements Iterable<T> {
 
             private Optional<T> takeNext() {
                 Optional<T> _next = getNext();
-                next = null;
+                if (!next.isEmpty()) {
+                    // Once end-of-queue is reached, don't consume item,
+                    // so that hasNext() will continue to return false
+                    next = null;
+                }
                 return _next;
             }
 
