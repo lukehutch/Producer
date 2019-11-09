@@ -52,13 +52,8 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** The queue. */
     private ArrayBlockingQueue<Optional<T>> boundedQueue;
 
-    /**
-     * The next item in the queue, used by the iterator. Placed in this class rather than the iterator class, so
-     * that if the user tries to iterate through a {@link Yielder} instance that has already been completely
-     * iterated through, then {@link Iterator#hasNext()} will immediately return false, rather than trying to start
-     * iterating through {@link #boundedQueue} again.
-     */
-    private Optional<T> next;
+    /** The iterator. */
+    private AtomicReference<Iterator<T>> iterator = new AtomicReference<>();
 
     /** An executor service for the producer and consumer threads. */
     private ExecutorService executor;
@@ -248,7 +243,10 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** Return an {@link Iterator} for the items produced by the producer. */
     @Override
     public Iterator<T> iterator() {
-        return new Iterator<T>() {
+        // Only create a new iterator once, since yielded items can only be iterated through once
+        iterator.compareAndSet(null, new Iterator<T>() {
+            private Optional<T> next;
+
             private Optional<T> getNext() {
                 if (next == null) {
                     try {
@@ -294,6 +292,7 @@ public abstract class Yielder<T> implements Iterable<T> {
                 }
                 return _next.get();
             }
-        };
+        });
+        return iterator.get();
     }
 }
