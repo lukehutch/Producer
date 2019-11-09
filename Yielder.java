@@ -50,10 +50,10 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public abstract class Yielder<T> implements Iterable<T> {
     /** The queue. */
-    private ArrayBlockingQueue<Optional<T>> boundedQueue;
+    private final ArrayBlockingQueue<Optional<T>> boundedQueue;
 
     /** The iterator. */
-    private AtomicReference<Iterator<T>> iterator = new AtomicReference<>();
+    private final Iterator<T> iterator;
 
     /** An executor service for the producer and consumer threads. */
     private ExecutorService executor;
@@ -71,8 +71,61 @@ public abstract class Yielder<T> implements Iterable<T> {
     public Yielder(int queueSize) {
         // Set up the bounded queue
         boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
+        
         // Start the producer thread
         startProducerThread();
+        
+        // Create the iterator
+        iterator = new Iterator<T>() {
+            /** The next item in the queue (empty, if at end of queue). */
+            private Optional<T> next;
+
+            private Optional<T> getNext() {
+                if (next == null) {
+                    try {
+                        next = boundedQueue.take();
+                    } catch (InterruptedException e) {
+                        // If the consumer is interrupted, cancel the producer thread
+                        cancelProducerThread();
+                        // Re-set the interrupt status of the current thread
+                        Thread.currentThread().interrupt();
+                        // Re-throw as RuntimeException, since the iterator sequence
+                        // will end earlier than expected, and the receiver should not 
+                        // assume the returned sequence is the full sequence
+                        throw new RuntimeException(e);
+                    }
+                }
+                // If producer threw an exception, re-throw it in the consumer
+                if (producerException.get() != null) {
+                    throw new RuntimeException("Producer threw an exception", producerException.get());
+                }
+                return next;
+            }
+
+            private Optional<T> takeNext() {
+                Optional<T> _next = getNext();
+                if (!next.isEmpty()) {
+                    // Once end-of-queue is reached, don't consume item,
+                    // so that hasNext() will continue to return false
+                    next = null;
+                }
+                return _next;
+            }
+
+            @Override
+            public boolean hasNext() {
+                return !getNext().isEmpty();
+            }
+
+            @Override
+            public T next() {
+                Optional<T> _next = takeNext();
+                if (_next.isEmpty()) {
+                    throw new IllegalArgumentException("No next item");
+                }
+                return _next.get();
+            }
+        };
     }
 
     /** Override this method with the producer code. */
@@ -243,56 +296,6 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** Return an {@link Iterator} for the items produced by the producer. */
     @Override
     public Iterator<T> iterator() {
-        // Only create a new iterator once, since yielded items can only be iterated through once
-        iterator.compareAndSet(null, new Iterator<T>() {
-            private Optional<T> next;
-
-            private Optional<T> getNext() {
-                if (next == null) {
-                    try {
-                        next = boundedQueue.take();
-                    } catch (InterruptedException e) {
-                        // If the consumer is interrupted, cancel the producer thread
-                        cancelProducerThread();
-                        // Re-set the interrupt status of the current thread
-                        Thread.currentThread().interrupt();
-                        // Re-throw as RuntimeException, since the iterator sequence
-                        // will end earlier than expected, and the receiver should not 
-                        // assume the returned sequence is the full sequence
-                        throw new RuntimeException(e);
-                    }
-                }
-                // If producer threw an exception, re-throw it in the consumer
-                if (producerException.get() != null) {
-                    throw new RuntimeException("Producer threw an exception", producerException.get());
-                }
-                return next;
-            }
-
-            private Optional<T> takeNext() {
-                Optional<T> _next = getNext();
-                if (!next.isEmpty()) {
-                    // Once end-of-queue is reached, don't consume item,
-                    // so that hasNext() will continue to return false
-                    next = null;
-                }
-                return _next;
-            }
-
-            @Override
-            public boolean hasNext() {
-                return !getNext().isEmpty();
-            }
-
-            @Override
-            public T next() {
-                Optional<T> _next = takeNext();
-                if (_next.isEmpty()) {
-                    throw new IllegalArgumentException("No next item");
-                }
-                return _next.get();
-            }
-        });
-        return iterator.get();
+        return iterator;
     }
 }
