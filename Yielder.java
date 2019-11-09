@@ -56,10 +56,10 @@ public abstract class Yielder<T> implements Iterable<T> {
     private final Iterator<T> iterator;
 
     /** An executor service for the producer and consumer threads. */
-    private ExecutorService executor;
+    private final ExecutorService producerThreadExecutor;
 
     /** The {@link Future} used to await termination of the producer thread. */
-    private Future<Void> producerThreadFuture;
+    private final Future<Void> producerThreadFuture;
 
     /** True when the producer thread has been shut down. */
     private final AtomicBoolean producerIsShutdown = new AtomicBoolean(false);
@@ -67,15 +67,74 @@ public abstract class Yielder<T> implements Iterable<T> {
     /** Non-null when the producer has thrown a non-caught exception. */
     private AtomicReference<Throwable> producerException = new AtomicReference<>();
 
+    /** Create named daemon threads */
+    private static class DaemonThreadFactory implements ThreadFactory {
+        /** The name prefix. */
+        private String namePrefix;
+
+        /** Used to generate unique thread names. */
+        private static final AtomicInteger threadIndex = new AtomicInteger();
+
+        /** Constructor */
+        public DaemonThreadFactory(String namePrefix) {
+            this.namePrefix = namePrefix;
+        }
+
+        @Override
+        public Thread newThread(Runnable r) {
+            final Thread thread = new Thread(r, namePrefix + "-" + threadIndex.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        }
+    }
+
     /** Construct a {@link Yielder} with a bounded queue of the specified length, and launch the producer thread. */
     public Yielder(int queueSize) {
         // Set up the bounded queue
         boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
-        
-        // Start the producer thread
-        startProducerThread();
-        
-        // Create the iterator
+
+        // Create thread executor
+        producerThreadExecutor = Executors.newFixedThreadPool(1, new DaemonThreadFactory("Producer"));
+
+        // Launch producer thread
+        producerThreadFuture = producerThreadExecutor.submit(() -> {
+            boolean normalTermination = false;
+            try {
+                try {
+                    // Execute producer method
+                    produce();
+                    // On normal termination, send end-of-queue marker
+                    boundedQueue.put(Optional.empty());
+                    // After end-of-queue marker has been successfully written without interruption,
+                    // record normal termination
+                    normalTermination = true;
+                } catch (InterruptedException e1) {
+                    // Ignore
+                } catch (RuntimeException e2) {
+                    if (e2.getCause() instanceof InterruptedException) {
+                        // Got InterruptedException wrapped in RuntimeException (from yield()), ignore
+                    } else {
+                        // For any other RuntimeException, set producer exception
+                        producerException.set(e2);
+                    }
+                } catch (Exception e3) {
+                    // For any other exception, set producer exception
+                    producerException.set(e3);
+                }
+            } finally {
+                // Shut down producer, if it is not already shut down
+                if (!producerIsShutdown.get()) {
+                    // If producer exited early due to interruption or throwing an exception,
+                    // then clear the queue in shutdownProducerThread().
+                    boolean clearQueue = !normalTermination;
+                    shutdownProducerThread(clearQueue);
+                }
+            }
+            // Return null so that Callable lambda is submitted, rather than Runnable
+            return null;
+        });
+
+        // Create the iterator for the consumer
         iterator = new Iterator<T>() {
             /** The next item in the queue (empty, if at end of queue). */
             private Optional<T> next;
@@ -128,108 +187,12 @@ public abstract class Yielder<T> implements Iterable<T> {
         };
     }
 
-    /** Override this method with the producer code. */
-    protected abstract void produce() throws Exception;
-
-    /**
-     * Yield an item to the consumer.
-     * 
-     * @throws RuntimeException If the producer thread is interrupted (by calling {@link #shutdownProducerThread()},
-     *                          this method will throw {@link RuntimeException} with the
-     *                          {@link InterruptedException} as the cause.
-     */
-    public final void yield(T item) {
-        if (producerIsShutdown.get()) {
-            // If producer is already shut down, simulate boundedQueue.put() getting interrupted below
-            throw new RuntimeException(new InterruptedException());
-        }
-        try {
-            this.boundedQueue.put(Optional.of(item));
-        } catch (InterruptedException e) {
-            // Interrupted by consumer calling shutdownProducerThread() -- need to wrap the InterruptedException
-            // in a RuntimeException, so that yield() does not need to declare "throws InterruptedException"
-            throw new RuntimeException(e);
-        }
-    }
-
-    /** Create named daemon threads */
-    private static class DaemonThreadFactory implements ThreadFactory {
-        /** The name prefix. */
-        private String namePrefix;
-
-        /** Used to generate unique thread names. */
-        private static final AtomicInteger threadIndex = new AtomicInteger();
-
-        /** Constructor */
-        public DaemonThreadFactory(String namePrefix) {
-            this.namePrefix = namePrefix;
-        }
-
-        @Override
-        public Thread newThread(Runnable r) {
-            final Thread thread = new Thread(r, namePrefix + "-" + threadIndex.getAndIncrement());
-            thread.setDaemon(true);
-            return thread;
-        }
-    }
-
-    /** Start the producer thread. */
-    private void startProducerThread() {
-        // Create thread executor
-        executor = Executors.newFixedThreadPool(1, new DaemonThreadFactory("Producer"));
-
-        // Launch producer thread
-        producerThreadFuture = executor.submit(() -> {
-            boolean normalTermination = false;
-            try {
-                try {
-                    // Execute producer method
-                    produce();
-                    // On normal termination, send end-of-queue marker
-                    boundedQueue.put(Optional.empty());
-                    // After end-of-queue marker has been successfully written without interruption,
-                    // record normal termination
-                    normalTermination = true;
-                } catch (InterruptedException e1) {
-                    // Ignore
-                } catch (RuntimeException e2) {
-                    if (e2.getCause() instanceof InterruptedException) {
-                        // Got InterruptedException wrapped in RuntimeException (from yield()), ignore
-                    } else {
-                        // For any other RuntimeException, set producer exception
-                        producerException.set(e2);
-                    }
-                } catch (Exception e3) {
-                    // For any other exception, set producer exception
-                    producerException.set(e3);
-                }
-            } finally {
-                // Shut down producer, if it is not already shut down
-                if (!producerIsShutdown.get()) {
-                    // If producer exited early due to interruption or throwing an exception,
-                    // then clear the queue in shutdownProducerThread().
-                    boolean clearQueue = !normalTermination;
-                    shutdownProducerThread(clearQueue);
-                }
-            }
-            // Return null so that Callable lambda is submitted, rather than Runnable
-            return null;
-        });
-    }
-
     /** Cancel the producer thread. */
     private void cancelProducerThread() {
         // Cancel producer if it's still running. This will interrupt attempts to put new values in the queue.
         if (!producerThreadFuture.isDone()) {
             producerThreadFuture.cancel(true);
         }
-    }
-
-    /**
-     * Initiate immediate termination -- interrupt and shut down the producer thread, and clear the queue.
-     */
-    public void shutdownProducerThread() {
-        shutdownProducerThread(/* clearQueue = */ true);
     }
 
     /**
@@ -270,27 +233,33 @@ public abstract class Yielder<T> implements Iterable<T> {
                 }
                 // Shut down executor service
                 try {
-                    executor.shutdown();
+                    producerThreadExecutor.shutdown();
                 } catch (final SecurityException e) {
                     // Ignore
                 }
                 boolean terminated = false;
                 try {
                     // Await termination
-                    terminated = executor.awaitTermination(5000, TimeUnit.MILLISECONDS);
+                    terminated = producerThreadExecutor.awaitTermination(5000, TimeUnit.MILLISECONDS);
                 } catch (final InterruptedException e) {
                     // Ignore
                 }
                 if (!terminated) {
                     try {
-                        executor.shutdownNow();
+                        producerThreadExecutor.shutdownNow();
                     } catch (final SecurityException e) {
                         throw new RuntimeException(e);
                     }
                 }
-                executor = null;
             }).start();
         }
+    }
+
+    /**
+     * Initiate immediate termination -- interrupt and shut down the producer thread, and clear the queue.
+     */
+    public void shutdownProducerThread() {
+        shutdownProducerThread(/* clearQueue = */ true);
     }
 
     /** Return an {@link Iterator} for the items produced by the producer. */
@@ -298,4 +267,28 @@ public abstract class Yielder<T> implements Iterable<T> {
     public Iterator<T> iterator() {
         return iterator;
     }
+
+    /**
+     * Yield an item to the consumer.
+     * 
+     * @throws RuntimeException If the producer thread is interrupted (by calling {@link #shutdownProducerThread()},
+     *                          this method will throw {@link RuntimeException} with the
+     *                          {@link InterruptedException} as the cause.
+     */
+    public final void yield(T item) {
+        if (producerIsShutdown.get()) {
+            // If producer is already shut down, simulate boundedQueue.put() getting interrupted below
+            throw new RuntimeException(new InterruptedException());
+        }
+        try {
+            this.boundedQueue.put(Optional.of(item));
+        } catch (InterruptedException e) {
+            // Interrupted by consumer calling shutdownProducerThread() -- need to wrap the InterruptedException
+            // in a RuntimeException, so that yield() does not need to declare "throws InterruptedException"
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** Override this method with the producer code. */
+    protected abstract void produce() throws Exception;
 }
