@@ -104,7 +104,8 @@ public abstract class Yielder<T> implements Iterable<T> {
             private Optional<T> getNext() {
                 // Start the producer thread if it has not yet been started.
                 // This is done lazily so that the Iterator can be garbage collected
-                // if it is not used, without leaving the producer thread running.
+                // if it is not used, without ever starting the producer thread or
+                // beginning to fill the queue.
                 if (!producerThreadHasBeenStarted.getAndSet(true) && !producerHasBeenShutdown.get()) {
                     startProducerThread();
                 }
