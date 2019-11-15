@@ -59,7 +59,7 @@ public abstract class Yielder<T> implements Iterable<T> {
     private ExecutorService producerThreadExecutor;
 
     /** The {@link Future} used to await termination of the producer thread. */
-    private AtomicReference<Future<Void>> producerThreadFuture;
+    private AtomicReference<Future<Void>> producerThreadFuture = new AtomicReference<>();
 
     /** True when the producer thread has been started. */
     private AtomicBoolean producerThreadHasBeenStarted = new AtomicBoolean(false);
