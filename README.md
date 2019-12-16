@@ -1,6 +1,8 @@
-# Yielder.java
+# Producer.java
 
 A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support for the `yield` / generator pattern. Provides a bounded queue between the producer and consumer, which allows for buffering and flow control, and allowing for parallel pipelining between producer and consumer (so that the consumer can be working on consuming the previous item while the producer is working on producing the next item).
+
+**Note:** Java 13 introduces a `yield` statement, so the `yield(...)` method name has been changed to `produce(...)`.
 
 **See also: [`PipelinedOutputStream`](https://github.com/lukehutch/PipelinedOutputStream)**
 
@@ -13,24 +15,24 @@ Since the queue size is smaller than the number of submitted items, the producer
 The fundamental pattern is:
 
 ```java
-Iterable<T> iterable = new Yielder<T>(queueSize) {
+Iterable<T> iterable = new Producer<T>(queueSize) {
     @Override
-    public void produce() {
+    public void producer() {
         T someT = makeNewT();
-        yield(someT);
+        produce(someT);
     }
 };
 ```
 
-`Yielder<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result. For example:
+`Producer<T>` implements `Iterable<T>`, so the consumer can use that to iterate through the result. For example:
 
 ```java
-for (Integer item : new Yielder<Integer>(/* queueSize = */ 5) {
+for (Integer item : new Producer<Integer>(/* queueSize = */ 5) {
     @Override
-    public void produce() {
+    public void producer() {
         for (int i = 0; i < 20; i++) {
             System.out.println("Producing " + i);
-            yield(i);
+            produce(i);
         }
         System.out.println("Producer exiting");
     }
@@ -92,19 +94,19 @@ Finished
 
 ## Caveats
 
-* `Yielder<T>` implements `Iterable<T>`, in other words `Yielder#iterator()` returns an `Iterator<T>` with methods `boolean hasNext()` and `T next()`. However these methods have semantics that are unusual compared to most Java iterators:
-  * `hasNext()` may block -- the producer will block when calling `yield()` if the queue is full, whereas the consumer will block on `hasNext()` if the queue is empty.
+* `Producer<T>` implements `Iterable<T>`, in other words `Yielder#iterator()` returns an `Iterator<T>` with methods `boolean hasNext()` and `T next()`. However these methods have semantics that are unusual compared to most Java iterators:
+  * `hasNext()` may block -- the producer will block when calling `produce()` if the queue is full, whereas the consumer will block on `hasNext()` if the queue is empty.
   * If the producer thread throws an uncaught exception, it will be re-thrown to the consumer wrapped in a `RuntimeException` when the consumer calls `hasNext()` or `next()`.
 * The consumer (the caller) should consume all items in the `Iterable<T>`, so that `hasNext()` returns `false`, in order to verify the producer thread has produced all items and shut down. Alternatively, you can shut down the producer early (before consuming all items) by calling `Yielder#shutdownProducerThread()`, which will also attempt to interrupt the producer thread, and then clear the queue.
-* If you do call `Yielder#shutdownProducerThread()` from the consumer, then when the blocking call to `yield(T)` is interrupted, the `InterruptedException` is thrown from `yield(T)` wrapped in a `RuntimeException`. This is so that `yield(T)` does not have to declare `throws InterruptedException`, which would create a lot of extra boilerplate in the most common usecase, where the consumer never tries to interrupt the producer. This `RuntimeException` is caught by the caller of the `produce()` method, and triggers the shutdown of the producer thread, and the clearing of any un-consumed items in the queue. To properly handle interruption (e.g. if you need to clean up resources), use `try...finally` around the `yield(T)` call:
+* If you do call `Yielder#shutdownProducerThread()` from the consumer, then when the blocking call to `produce(T)` is interrupted, the `InterruptedException` is thrown from `produce(T)` wrapped in a `RuntimeException`. This is so that `produce(T)` does not have to declare `throws InterruptedException`, which would create a lot of extra boilerplate in the most common usecase, where the consumer never tries to interrupt the producer. This `RuntimeException` is caught by the caller of the `producer()` method, and triggers the shutdown of the producer thread, and the clearing of any un-consumed items in the queue. To properly handle interruption (e.g. if you need to clean up resources), use `try...finally` around the `produce(T)` call:
 
 ```java
-Iterable<T> iterable = new Yielder<T>(queueSize) {
+Iterable<T> iterable = new Producer<T>(queueSize) {
     @Override
-    public void produce() {
+    public void producer() {
         try {
             T someT = makeNewT();
-            yield(someT);
+            produce(someT);
         } finally {
             cleanupEvenIfInterrupted();
         }
@@ -115,12 +117,12 @@ Iterable<T> iterable = new Yielder<T>(queueSize) {
 or catch the wrapped exception directly, then (importantly) re-throw it so that the caller still knows that the producer was interrupted:
 
 ```java
-Iterable<T> iterable = new Yielder<T>(queueSize) {
+Iterable<T> iterable = new Producer<T>(queueSize) {
     @Override
-    public void produce() {
+    public void producer() {
         try {
             T someT = makeNewT();
-            yield(someT);
+            produce(someT);
         } catch (RuntimeException e) {
             if (e instanceof InterruptedException) {
                 System.out.println("yield call was interrupted by consumer");
