@@ -41,14 +41,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * A simple producer / consumer class for Java. Launches the producer in a separate thread, which provides support
- * for the yield / generator pattern. Provides a bounded queue between the producer and consumer, which allows for
- * buffering and flow control, and allowing for parallel pipelining between producer and consumer (so that the
- * consumer can be working on consuming the previous item while the producer is working on producing the next item).
+ * A simple producer class for Java. Launches the producer in a separate thread from the consumer, which provides
+ * support for the yield / generator pattern. Provides a bounded queue between the producer and consumer, which
+ * allows for buffering and flow control, and allowing for parallel pipelining between producer and consumer (so
+ * that the consumer can be working on consuming the previous item while the producer is working on producing the
+ * next item).
  * 
  * @author Luke Hutchison
  */
-public abstract class Producer<T> implements Iterable<T> {
+public class Producer<T> implements Iterable<T> {
     /** The queue. */
     private final ArrayBlockingQueue<Optional<T>> boundedQueue;
 
@@ -69,6 +70,18 @@ public abstract class Producer<T> implements Iterable<T> {
 
     /** Non-null when the producer has thrown a non-caught exception. */
     private AtomicReference<Throwable> producerException = new AtomicReference<>();
+
+    /** The user-supplied {@link ProducerMethod}. */
+    private ProducerMethod<T> producerMethod;
+
+    /**
+     * As an alternative to overriding the {@link #produce()} method, a {@link ProducerMethod} can be supplied to
+     * {@link Producer(int, ProducerMethod)}.
+     */
+    @FunctionalInterface
+    public static interface ProducerMethod<T> {
+        public void produce(Producer<T> producer);
+    }
 
     /** Create named daemon threads */
     private static class DaemonThreadFactory implements ThreadFactory {
@@ -91,9 +104,7 @@ public abstract class Producer<T> implements Iterable<T> {
         }
     }
 
-    /**
-     * Construct a {@link Producer} with a bounded queue of the specified length, and launch the producer thread.
-     */
+    /** Construct a {@link Producer} with a bounded queue of the specified length. */
     public Producer(int queueSize) {
         // Set up the bounded queue
         boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
@@ -156,6 +167,15 @@ public abstract class Producer<T> implements Iterable<T> {
                 return _next.get();
             }
         };
+    }
+
+    /**
+     * Construct a {@link Producer} with a bounded queue of the specified length, and specify a
+     * {@link ProducerMethod} to run (instead of overriding the produce() method).
+     */
+    public Producer(int queueSize, ProducerMethod<T> producerMethod) {
+        this(queueSize);
+        this.producerMethod = producerMethod;
     }
 
     /**
@@ -324,6 +344,13 @@ public abstract class Producer<T> implements Iterable<T> {
         }
     }
 
-    /** Override this method with the producer code. */
-    protected abstract void producer() throws Exception;
+    /** Override this method if a {@link ProducerMethod} is not supplied to the constructor. */
+    protected void producer() throws Exception {
+        if (producerMethod == null) {
+            throw new IllegalArgumentException(
+                    "Please provide a " + ProducerMethod.class.getSimpleName() + " to the "
+                            + Producer.class.getSimpleName() + " constructor, or override the producer() method");
+        }
+        producerMethod.produce(this);
+    }
 }
