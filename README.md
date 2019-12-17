@@ -43,6 +43,22 @@ for (Integer item : new Producer<Integer>(/* queueSize = */ 5) {
 System.out.println("Finished");
 ```
 
+It is also possible to pass a `ProducerMethod` lambda into the `Producer` constructor, rather than overriding the `producer()` method (which cuts down on boilerplate syntax a bit):
+
+```java
+for (Integer item : new Producer<Integer>(/* queueSize = */ 5, producer -> {
+    for (int i = 0; i < 20; i++) {
+        System.out.println("Producing " + i);
+        producer.produce(i);
+    }
+    System.out.println("Producer exiting");
+})) {
+    System.out.println("  Consuming " + item);
+    Thread.sleep(200);
+}
+System.out.println("Finished");
+```
+
 ### Output
 
 The above example produces the following output (modulo nondeterminism). Note how the first five items are produced, filling the queue, before the consumer has a chance to start iterating through the queue items (although if the consumer thread (the main thread) had started iterating more quickly, the consumer could have started consuming even after the first item had been produced). The producer subsequently blocks, waiting for an empty slot in the queue before it can produce another item.
