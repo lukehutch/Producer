@@ -43,7 +43,7 @@ for (Integer item : new Producer<Integer>(/* queueSize = */ 5) {
 System.out.println("Finished");
 ```
 
-It is also possible to pass a `ProducerMethod` lambda into the `Producer` constructor, rather than overriding the `producer()` method (which cuts down on boilerplate syntax a bit):
+It is also possible to pass a `ProducerMethod` functional interface lambda into the `Producer` constructor (which takes the `Producer` reference as its only argument), rather than overriding the `producer()` method. This cuts down on boilerplate syntax a bit:
 
 ```java
 for (Integer item : new Producer<Integer>(/* queueSize = */ 5, producer -> {
