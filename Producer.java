@@ -1,9 +1,9 @@
 /*
- * Yielder.java
+ * Producer.java
  *
  * Author: Luke Hutchison
  *
- * Hosted at: https://github.com/lukehutch/Yielder
+ * Hosted at: https://github.com/lukehutch/Producer
  *
  * --
  *
@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 
  * @author Luke Hutchison
  */
-public abstract class Yielder<T> implements Iterable<T> {
+public abstract class Producer<T> implements Iterable<T> {
     /** The queue. */
     private final ArrayBlockingQueue<Optional<T>> boundedQueue;
 
@@ -91,8 +91,10 @@ public abstract class Yielder<T> implements Iterable<T> {
         }
     }
 
-    /** Construct a {@link Yielder} with a bounded queue of the specified length, and launch the producer thread. */
-    public Yielder(int queueSize) {
+    /**
+     * Construct a {@link Producer} with a bounded queue of the specified length, and launch the producer thread.
+     */
+    public Producer(int queueSize) {
         // Set up the bounded queue
         boundedQueue = new ArrayBlockingQueue<Optional<T>>(queueSize);
 
@@ -169,7 +171,7 @@ public abstract class Yielder<T> implements Iterable<T> {
             try {
                 try {
                     // Execute producer method
-                    produce();
+                    producer();
                     // On normal termination, send end-of-queue marker
                     boundedQueue.put(Optional.empty());
                     // After end-of-queue marker has been successfully written without interruption,
@@ -292,20 +294,23 @@ public abstract class Yielder<T> implements Iterable<T> {
         shutdownProducerThread();
     }
 
-    /** Return an {@link Iterator} for the items produced by the producer. */
+    /**
+     * Return an {@link Iterator} for the items produced by the producer. The {@link Iterator#hasNext()} method will
+     * block if the queue is empty.
+     */
     @Override
     public Iterator<T> iterator() {
         return iterator;
     }
 
     /**
-     * Yield an item to the consumer.
+     * Produce an item (yield an item to the consumer). Blocks if queue is full.
      * 
      * @throws RuntimeException If the producer thread is interrupted (by calling {@link #shutdownProducerThread()},
      *                          this method will throw {@link RuntimeException} with the
      *                          {@link InterruptedException} as the cause.
      */
-    public final void yield(T item) {
+    public final void produce(T item) {
         if (producerHasBeenShutdown.get()) {
             // If producer is already shut down, simulate boundedQueue.put() getting interrupted below
             throw new RuntimeException(new InterruptedException());
@@ -320,5 +325,5 @@ public abstract class Yielder<T> implements Iterable<T> {
     }
 
     /** Override this method with the producer code. */
-    protected abstract void produce() throws Exception;
+    protected abstract void producer() throws Exception;
 }
