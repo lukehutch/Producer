@@ -145,7 +145,7 @@ public class Producer<T> implements Iterable<T> {
 
             private Optional<T> takeNext() {
                 Optional<T> _next = getNext();
-                if (!next.isEmpty()) {
+                if (next.isPresent()) {
                     // Once end-of-queue is reached, don't consume item,
                     // so that hasNext() will continue to return false
                     next = null;
@@ -155,13 +155,13 @@ public class Producer<T> implements Iterable<T> {
 
             @Override
             public boolean hasNext() {
-                return !getNext().isEmpty();
+                return getNext().isPresent();
             }
 
             @Override
             public T next() {
                 Optional<T> _next = takeNext();
-                if (_next.isEmpty()) {
+                if (!_next.isPresent()) {
                     throw new IllegalArgumentException("No next item");
                 }
                 return _next.get();
